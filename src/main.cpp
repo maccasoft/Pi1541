@@ -754,7 +754,7 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 	int headSoundFreqCounter = 0;
 	//			const int headSoundFreq = 833;	// 1200Hz = 1/1200 * 10^6;
 	const int headSoundFreq = 1000000 / options.SoundOnGPIOFreq();	// 1200Hz = 1/1200 * 10^6;
-	unsigned char oldHeadDir;
+	unsigned char oldHeadDir = 0;
 	int resetCount = 0;
 	bool refreshOutsAfterCPUStep = true;
 	unsigned numberOfImages = diskCaddy.GetNumberOfImages();
@@ -834,11 +834,13 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 				IEC_Bus::RefreshOuts1541();	// Now output all outputs.
 
 			IEC_Bus::OutputLED = pi1541.drive.IsLEDOn();
+#if defined(RPI3)
 			if (IEC_Bus::OutputLED ^ oldLED)
 			{
 				SetACTLed(IEC_Bus::OutputLED);
 				oldLED = IEC_Bus::OutputLED;
 			}
+#endif
 
 #if not defined(EXPERIMENTALZERO)
 			// Do head moving sound
@@ -939,11 +941,18 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 			if (nextDisk)
 			{
 				pi1541.drive.Insert(diskCaddy.PrevDisk());
+#if defined(EXPERIMENTALZERO)
+				diskCaddy.Update();
+#endif
 			}
 			else if (prevDisk)
 			{
 				pi1541.drive.Insert(diskCaddy.NextDisk());
+#if defined(EXPERIMENTALZERO)
+				diskCaddy.Update();
+#endif
 			}
+#if not defined(EXPERIMENTALZERO)
 			else if (inputMappings->directDiskSwapRequest != 0)
 			{
 				for (caddyIndex = 0; caddyIndex < numberOfImagesMax; ++caddyIndex)
@@ -960,6 +969,7 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 				}
 				inputMappings->directDiskSwapRequest = 0;
 			}
+#endif
 		}
 	}
 	return exitReason;
@@ -978,7 +988,7 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 	int headSoundFreqCounter = 0;
 	//			const int headSoundFreq = 833;	// 1200Hz = 1/1200 * 10^6;
 	const int headSoundFreq = 1000000 / options.SoundOnGPIOFreq();	// 1200Hz = 1/1200 * 10^6;
-	unsigned int oldTrack;
+	unsigned int oldTrack = 0;
 	int resetCount = 0;
 
 	unsigned numberOfImages = diskCaddy.GetNumberOfImages();
@@ -1042,11 +1052,13 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 		//if (cycleCount >= FAST_BOOT_CYCLES)	// cycleCount is used so we can quickly get through 1541's self test code. This will make the emulated 1541 responsive to commands asap. During this time we don't need to set outputs.
 		{
 			IEC_Bus::OutputLED = pi1581.IsLEDOn();
+#if defined(RPI3)
 			if (IEC_Bus::OutputLED ^ oldLED)
 			{
 				SetACTLed(IEC_Bus::OutputLED);
 				oldLED = IEC_Bus::OutputLED;
 			}
+#endif
 
 #if not defined(EXPERIMENTALZERO)
 			// Do head moving sound
@@ -1068,7 +1080,9 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 		}
 
 		// Other core will check the uart (as it is slow) (could enable uart irqs - will they execute on this core?)
+#if not defined(EXPERIMENTALZERO)
 		inputMappings->CheckKeyboardEmulationMode(numberOfImages, numberOfImagesMax);
+#endif
 		inputMappings->CheckButtonsEmulationMode();
 
 		bool exitEmulation = inputMappings->Exit();
@@ -1132,11 +1146,18 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 			if (nextDisk)
 			{
 				pi1581.Insert(diskCaddy.PrevDisk());
+#if defined(EXPERIMENTALZERO)
+				diskCaddy.Update();
+#endif
 			}
 			else if (prevDisk)
 			{
 				pi1581.Insert(diskCaddy.NextDisk());
+#if defined(EXPERIMENTALZERO)
+				diskCaddy.Update();
+#endif
 			}
+#if not defined(EXPERIMENTALZERO)
 			else if (inputMappings->directDiskSwapRequest != 0)
 			{
 				for (caddyIndex = 0; caddyIndex < numberOfImagesMax; ++caddyIndex)
@@ -1153,6 +1174,7 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 				}
 				inputMappings->directDiskSwapRequest = 0;
 			}
+#endif
 		}
 
 	}

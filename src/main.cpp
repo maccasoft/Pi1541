@@ -120,6 +120,9 @@ bool USBKeyboardDetected = false;
 //bool resetWhileEmulating = false;
 bool selectedViaIECCommands = false;
 u16 pc;
+#if defined(RPI2)
+u32 clockCycles1MHz;
+#endif
 
 #if not defined(EXPERIMENTALZERO)
 SpinLock core0RefreshingScreen;
@@ -265,6 +268,14 @@ void InitialiseHardware()
 	RPI_PropertyInit();
 	RPI_PropertyAddTag(TAG_SET_CLOCK_RATE, ARM_CLK_ID, MaxClk);
 	RPI_PropertyProcess();
+
+#if defined(RPI2)
+	// Enable clock cycle counter
+	asm volatile ("mcr p15,0,%0,c9,c12,0" :: "r" (0b0001));
+	asm volatile ("mcr p15,0,%0,c9,c12,1" :: "r" ((1 << 31)));
+
+	clockCycles1MHz = MaxClk / 1000000;
+#endif
 }
 
 void InitialiseLCD()
@@ -785,7 +796,11 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 
 	IEC_Bus::LetSRQBePulledHigh();
 
+#if defined(RPI2)
+	asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctBefore));
+#else
 	ctBefore = read32(ARM_SYSTIMER_CLO);
+#endif
 
 	//resetWhileEmulating = false;
 	selectedViaIECCommands = false;
@@ -901,6 +916,12 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 		}
 		else
 		{
+#if defined(RPI2)
+			do  // Sync to the 1MHz clock
+			{
+				asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctAfter));
+			} while ((ctAfter - ctBefore) < clockCycles1MHz);
+#else
 			do	// Sync to the 1MHz clock
 			{
 				ctAfter = read32(ARM_SYSTIMER_CLO);
@@ -912,6 +933,7 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 					//DEBUG_LOG("!");
 				}
 			} while (ctAfter == ctBefore);
+#endif
 		}
 		ctBefore = ctAfter;
 		
@@ -1016,7 +1038,11 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 	IEC_Bus::port = pi1581.CIA.GetPortB();
 	pi1581.Reset();	// will call IEC_Bus::Reset();
 
+#if defined(RPI2)
+	asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctBefore));
+#else
 	ctBefore = read32(ARM_SYSTIMER_CLO);
+#endif
 
 	//resetWhileEmulating = false;
 	selectedViaIECCommands = false;
@@ -1112,6 +1138,12 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 		}
 		else
 		{
+#if defined(RPI2)
+			do  // Sync to the 1MHz clock
+			{
+				asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctAfter));
+			} while ((ctAfter - ctBefore) < clockCycles1MHz);
+#else
 			do	// Sync to the 1MHz clock
 			{
 				ctAfter = read32(ARM_SYSTIMER_CLO);
@@ -1123,6 +1155,7 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 					//DEBUG_LOG("!");
 				}
 			} while (ctAfter == ctBefore);
+#endif
 		}
 		ctBefore = ctAfter;
 

@@ -796,12 +796,6 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 
 	IEC_Bus::LetSRQBePulledHigh();
 
-#if defined(RPI2)
-	asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctBefore));
-#else
-	ctBefore = read32(ARM_SYSTIMER_CLO);
-#endif
-
 	//resetWhileEmulating = false;
 	selectedViaIECCommands = false;
 
@@ -813,6 +807,31 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 	{
 		refreshOutsAfterCPUStep = false;
 	}
+
+	// Quickly get through 1541's self test code.
+	// This will make the emulated 1541 responsive to commands asap.
+	// During this time we don't need to set outputs.
+
+	while (cycleCount < FAST_BOOT_CYCLES)
+	{
+		IEC_Bus::ReadEmulationMode1541();
+
+		pi1541.m6502.SYNC();
+
+		pi1541.m6502.Step();
+
+		pi1541.Update();
+
+		cycleCount++;
+	}
+
+	// Self test code done. Begin realtime emulation.
+
+#if defined(RPI2)
+	asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctBefore));
+#else
+	ctBefore = read32(ARM_SYSTIMER_CLO);
+#endif
 
 	while (exitReason == EXIT_UNKNOWN)
 	{
@@ -837,46 +856,43 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 
 		pi1541.m6502.Step();	// If the CPU reads or writes to the VIA then clk and data can change
 
-		if (cycleCount >= FAST_BOOT_CYCLES)	// cycleCount is used so we can quickly get through 1541's self test code. This will make the emulated 1541 responsive to commands asap. During this time we don't need to set outputs.
-		{
-			//To artificialy delay the outputs later into the phi2's cycle (do this on future Pis that will be faster and perhaps too fast)
-			//read32(ARM_SYSTIMER_CLO);	//Each one of these is > 100ns
-			//read32(ARM_SYSTIMER_CLO);
-			//read32(ARM_SYSTIMER_CLO);
+		//To artificialy delay the outputs later into the phi2's cycle (do this on future Pis that will be faster and perhaps too fast)
+		//read32(ARM_SYSTIMER_CLO);	//Each one of these is > 100ns
+		//read32(ARM_SYSTIMER_CLO);
+		//read32(ARM_SYSTIMER_CLO);
 
-//			IEC_Bus::ReadEmulationMode1541();
-			if (refreshOutsAfterCPUStep)
-				IEC_Bus::RefreshOuts1541();	// Now output all outputs.
+//		IEC_Bus::ReadEmulationMode1541();
+		if (refreshOutsAfterCPUStep)
+			IEC_Bus::RefreshOuts1541();	// Now output all outputs.
 
-			IEC_Bus::OutputLED = pi1541.drive.IsLEDOn();
+		IEC_Bus::OutputLED = pi1541.drive.IsLEDOn();
 #if defined(RPI3)
-			if (IEC_Bus::OutputLED ^ oldLED)
-			{
-				SetACTLed(IEC_Bus::OutputLED);
-				oldLED = IEC_Bus::OutputLED;
-			}
+		if (IEC_Bus::OutputLED ^ oldLED)
+		{
+			SetACTLed(IEC_Bus::OutputLED);
+			oldLED = IEC_Bus::OutputLED;
+		}
 #endif
 
 #if not defined(EXPERIMENTALZERO)
-			// Do head moving sound
-			unsigned char headDir = pi1541.drive.GetLastHeadDirection();
-			if (headDir ^ oldHeadDir)	// Need to start a new sound?
+		// Do head moving sound
+		unsigned char headDir = pi1541.drive.GetLastHeadDirection();
+		if (headDir != oldHeadDir)	// Need to start a new sound?
+		{
+			oldHeadDir = headDir;
+			if (options.SoundOnGPIO())
 			{
-				oldHeadDir = headDir;
-				if (options.SoundOnGPIO())
-				{
-					headSoundCounter = 1000 * options.SoundOnGPIODuration();
-					headSoundFreqCounter = headSoundFreq;
-				}
-				else
-				{
-					PlaySoundDMA();
-				}
+				headSoundCounter = 1000 * options.SoundOnGPIODuration();
+				headSoundFreqCounter = headSoundFreq;
 			}
+			else
+			{
+				PlaySoundDMA();
+			}
+		}
 
 
 #endif
-		}
 
 		IEC_Bus::ReadButtonsEmulationMode();
 
@@ -909,39 +925,30 @@ EXIT_TYPE Emulate1541(FileBrowser* fileBrowser)
 				exitReason = EXIT_AUTOLOAD;
 		}
 
-		if (cycleCount < FAST_BOOT_CYCLES)	// cycleCount is used so we can quickly get through 1541's self test code. This will make the emulated 1541 responsive to commands asap.
-		{
-			cycleCount++;
-			ctAfter = read32(ARM_SYSTIMER_CLO);
-		}
-		else
-		{
 #if defined(RPI2)
-			do  // Sync to the 1MHz clock
-			{
-				asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctAfter));
-			} while ((ctAfter - ctBefore) < clockCycles1MHz);
+		do  // Sync to the 1MHz clock
+		{
+			asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctAfter));
+		} while ((ctAfter - ctBefore) < clockCycles1MHz);
 #else
-			do	// Sync to the 1MHz clock
+		do	// Sync to the 1MHz clock
+		{
+			ctAfter = read32(ARM_SYSTIMER_CLO);
+			unsigned ct = ctAfter - ctBefore;
+			if (ct > 1)
 			{
-				ctAfter = read32(ARM_SYSTIMER_CLO);
-				unsigned ct = ctAfter - ctBefore;
-				if (ct > 1)
-				{
-					// If this ever occurs then we have taken too long (ie >1us) and lost a cycle.
-					// Cycle accuracy is now in jeopardy. If this occurs during critical communication loops then emulation can fail!
-					//DEBUG_LOG("!");
-				}
-			} while (ctAfter == ctBefore);
+				// If this ever occurs then we have taken too long (ie >1us) and lost a cycle.
+				// Cycle accuracy is now in jeopardy. If this occurs during critical communication loops then emulation can fail!
+				//DEBUG_LOG("!");
+			}
+		} while (ctAfter == ctBefore);
 #endif
-		}
 		ctBefore = ctAfter;
 		
 		if (!refreshOutsAfterCPUStep)
 		{
 			IEC_Bus::ReadEmulationMode1541();
-			if (cycleCount >= FAST_BOOT_CYCLES)	// cycleCount is used so we can quickly get through 1541's self test code. This will make the emulated 1541 responsive to commands asap. During this time we don't need to set outputs.
-				IEC_Bus::RefreshOuts1541();	// Now output all outputs.
+			IEC_Bus::RefreshOuts1541();	// Now output all outputs.
 		}
 #if not defined(EXPERIMENTALZERO)
 		if (options.SoundOnGPIO() && headSoundCounter > 0)
@@ -1051,9 +1058,10 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 
 	while (exitReason == EXIT_UNKNOWN)
 	{
+		IEC_Bus::ReadEmulationMode1581();
+
 		for (int cycle2MHz = 0; cycle2MHz < 2; ++cycle2MHz)
 		{
-			IEC_Bus::ReadEmulationMode1581();
 			if (pi1581.m6502.SYNC())	// About to start a new instruction.
 			{
 				pc = pi1581.m6502.GetPC();
@@ -1075,35 +1083,32 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 
 		IEC_Bus::RefreshOuts1581();	// Now output all outputs.
 
-		//if (cycleCount >= FAST_BOOT_CYCLES)	// cycleCount is used so we can quickly get through 1541's self test code. This will make the emulated 1541 responsive to commands asap. During this time we don't need to set outputs.
-		{
-			IEC_Bus::OutputLED = pi1581.IsLEDOn();
+		IEC_Bus::OutputLED = pi1581.IsLEDOn();
 #if defined(RPI3)
-			if (IEC_Bus::OutputLED ^ oldLED)
-			{
-				SetACTLed(IEC_Bus::OutputLED);
-				oldLED = IEC_Bus::OutputLED;
-			}
+		if (IEC_Bus::OutputLED ^ oldLED)
+		{
+			SetACTLed(IEC_Bus::OutputLED);
+			oldLED = IEC_Bus::OutputLED;
+		}
 #endif
 
 #if not defined(EXPERIMENTALZERO)
-			// Do head moving sound
-			unsigned int track = pi1581.wd177x.GetCurrentTrack();
-			if (track != oldTrack)	// Need to start a new sound?
+		// Do head moving sound
+		unsigned int track = pi1581.wd177x.GetCurrentTrack();
+		if (track != oldTrack)	// Need to start a new sound?
+		{
+			oldTrack = track;
+			if (options.SoundOnGPIO())
 			{
-				oldTrack = track;
-				if (options.SoundOnGPIO())
-				{
-					headSoundCounter = 1000 * options.SoundOnGPIODuration();
-					headSoundFreqCounter = headSoundFreq;
-				}
-				else
-				{
-					PlaySoundDMA();
-				}
+				headSoundCounter = 1000 * options.SoundOnGPIODuration();
+				headSoundFreqCounter = headSoundFreq;
 			}
-#endif
+			else
+			{
+				PlaySoundDMA();
+			}
 		}
+#endif
 
 		// Other core will check the uart (as it is slow) (could enable uart irqs - will they execute on this core?)
 #if not defined(EXPERIMENTALZERO)
@@ -1131,32 +1136,24 @@ EXIT_TYPE Emulate1581(FileBrowser* fileBrowser)
 				exitReason = EXIT_AUTOLOAD;
 		}
 
-		if (cycleCount < FAST_BOOT_CYCLES)	// cycleCount is used so we can quickly get through 1541's self test code. This will make the emulated 1541 responsive to commands asap.
-		{
-			cycleCount++;
-			ctAfter = read32(ARM_SYSTIMER_CLO);
-		}
-		else
-		{
 #if defined(RPI2)
-			do  // Sync to the 1MHz clock
-			{
-				asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctAfter));
-			} while ((ctAfter - ctBefore) < clockCycles1MHz);
+		do  // Sync to the 1MHz clock
+		{
+			asm volatile ("mrc p15,0,%0,c9,c13,0" : "=r" (ctAfter));
+		} while ((ctAfter - ctBefore) < clockCycles1MHz);
 #else
-			do	// Sync to the 1MHz clock
+		do	// Sync to the 1MHz clock
+		{
+			ctAfter = read32(ARM_SYSTIMER_CLO);
+			unsigned ct = ctAfter - ctBefore;
+			if (ct > 1)
 			{
-				ctAfter = read32(ARM_SYSTIMER_CLO);
-				unsigned ct = ctAfter - ctBefore;
-				if (ct > 1)
-				{
-					// If this ever occurs then we have taken too long (ie >1us) and lost a cycle.
-					// Cycle accuracy is now in jeopardy. If this occurs during critical communication loops then emulation can fail!
-					//DEBUG_LOG("!");
-				}
-			} while (ctAfter == ctBefore);
+				// If this ever occurs then we have taken too long (ie >1us) and lost a cycle.
+				// Cycle accuracy is now in jeopardy. If this occurs during critical communication loops then emulation can fail!
+				//DEBUG_LOG("!");
+			}
+		} while (ctAfter == ctBefore);
 #endif
-		}
 		ctBefore = ctAfter;
 
 #if not defined(EXPERIMENTALZERO)
